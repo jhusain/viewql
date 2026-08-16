@@ -4,28 +4,38 @@
 
 **Write React components directly against your GraphQL Schema types. ViewQL derives the Queries and Fragment Definitions for you.**
 
-ViewQL is a React-first GraphQL compiler that derives queries and fragments from the data your components actually use.  
-
-Instead of writing a GraphQL fragment and then writing component code that repeats the same field selections, ViewQL lets the component itself be the source of truth. The ViewQL compiler can even emit @skip/@include directives to avoid fetching fields when it can determine they are not used under certain conditions.
+ViewQL is a compiler that automatically derives GraphQL operation and fragment definitions to fetch the data your React components actually use. Consider the following example component which transforms the GraphQL Person Schema Type:
 
 ```tsx
-const PersonView =
-  defineFragmentView<Schema.Person, "person", PersonViewProps>(
-    ({ person, showFriends }) => (
-      <div>
-        <div>{person.name()}</div>
+const PersonInfoByIDView =
+  defineQueryView<YourSchema.Query, { id: GraphSpec.ID, showFriends: boolean }}>(
+    ({ query, id, showFriends }) => {
+      const node = query.node({id});
+      if (node instanceof Person) {
+        const person = node as Person;
+        return <div>
+          <div>{person.name()}</div>
 
-        {showFriends && (
-          <Defer fallback={<div>Loading friends...</div>}>
-            <FriendList person={person} />
-          </Defer>
-        )}
-      </div>
-    )
-  );
+          {showFriends && (
+            <Defer fallback={<div>Loading friends...</div>}>
+              <FriendList person={person} />
+            </Defer>
+          )}
+        </div>
+      }
+      else {
+        return <div>Person not found.</div>;
+      }
+    );
 ```
 
-ViewQL analyzes the component, determines which GraphQL fields and fragments it requires, extracts the corresponding GraphQL definitions, runs the GraphQL client compiler, and rewrites the application to consume the generated fragment models.
+ViewQL analyzes this React component and automatically performs the following operations:
+
+* Defines GraphQL queries and fragments to retrieve the necessary fields for all components.
+* Conditionally `@include` the Person's friend list in the query response by promoting the showFriends prop to a GraphQL query parameter.
+* `@defer` loading of Person's friends list, and suspend rendering of `<FriendsList>` component until the data is received.
+* Replaces references to the Person schema type with the generated fragment types at build time
+
 
 Relay is the initial supported GraphQL client. Apollo Client support is planned.
 
