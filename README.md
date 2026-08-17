@@ -39,29 +39,6 @@ ViewQL analyzes this React component and automatically performs the following op
 
 Relay is the initial supported GraphQL client. Apollo Client support is planned.
 
-## Schema compiler
-
-`@viewql/schema` generates the compiler-facing TypeScript façade from a local
-SDL file (the recommended, reproducible workflow), introspection JSON, an
-existing GraphQL.js `GraphQLSchema`, or an explicitly requested remote
-introspection endpoint:
-
-```ts
-import { compileSchema, loadSchemaFile } from "@viewql/schema";
-
-const schema = await loadSchemaFile("./schema.graphql");
-const generated = await compileSchema(
-  { kind: "schema", schema },
-  { scalarMappings: { DateTime: "string" } },
-);
-```
-
-The loader normalizes every source to `GraphQLSchema`, then the compiler builds
-a ViewQL schema IR before deterministic TypeScript emission. Generated output
-references GraphQL primitives from `@viewql/spec`; it has no React or GraphQL
-client dependency. Introspection JSON can be loaded from a `.json` file, while
-remote acquisition is opt-in through a `{ kind: "url", url }` source.
-
 ## Why ViewQL?
 
 ### Don't Repeat Yourself

@@ -22,7 +22,6 @@
     "graphql": "^16.11.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "@viewql/spec": "0.0.0"
+    "@types/node": "^24.0.0"
   }
 }
