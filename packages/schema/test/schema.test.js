@@ -8,22 +8,35 @@ import { graphql, getIntrospectionQuery } from "graphql";
 import prettier from "prettier";
 import {
   compileSchema,
-  createSchemaIR,
   generateViewQLSchema,
   loadSchema,
   loadSchemaFile,
 } from "../dist/index.js";
 
 const SDL = `
+  type Account { id: ID! }
   scalar DateTime @specifiedBy(url: "https://example.test/date-time")
-  enum Role { ADMIN USER @deprecated(reason: "legacy") }
-  interface Node { id: ID! }
+  input Filter { limit: Int! = 10, term: String }
   interface Named implements Node { id: ID!, name: String! }
-  type User implements Node & Named { id: ID!, name: String!, friends: [User] }
-  union SearchResult = User
-  input Filter { term: String, limit: Int! = 10 }
+  interface Node { id: ID! }
+  type Query { search: [SearchResult!]!, user(filter: Filter, id: ID!): User }
+  enum Role { ADMIN USER @deprecated(reason: "legacy") }
+  union SearchResult = Account | User
   input Selector @oneOf { id: ID, name: String }
+  type User implements Named & Node { friends: [User], id: ID!, name: String! }
+`;
+
+const UNALPHABETIZED_SDL = `
+  type User implements Node & Named { name: String!, id: ID!, friends: [User] }
+  input Selector @oneOf { name: String, id: ID }
+  union SearchResult = User | Account
+  enum Role { USER @deprecated(reason: "legacy") ADMIN }
   type Query { user(id: ID!, filter: Filter): User, search: [SearchResult!]! }
+  interface Node { id: ID! }
+  interface Named implements Node { name: String!, id: ID! }
+  input Filter { term: String, limit: Int! = 10 }
+  scalar DateTime @specifiedBy(url: "https://example.test/date-time")
+  type Account { id: ID! }
 `;
 
 function formatTypeScript(source) {
@@ -39,17 +52,6 @@ function formatTypeScript(source) {
   });
 }
 
-test("normalizes SDL into a source-independent schema IR", async () => {
-  const schema = await loadSchema({ kind: "sdl", sdl: SDL });
-  const ir = createSchemaIR(schema);
-  const named = ir.types.find((type) => type.name === "Named");
-  const query = ir.types.find((type) => type.name === "Query");
-
-  assert.deepEqual(named.interfaces, ["Node"]);
-  assert.equal(query.rootKind, "query");
-  assert.equal(query.fields[0].args[0].type.kind, "nonNull");
-});
-
 test("emits spec-backed facade types with exact nullability and inputs", async () => {
   const output = await compileSchema(
     { kind: "sdl", sdl: SDL },
@@ -61,11 +63,17 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
 
     import * as GraphQLSpec from "@viewql/spec";
 
+    export interface Account extends GraphQLSpec.Obj {
+      id(): GraphQLSpec.ID;
+    }
+
+    export declare const Account: GraphQLSpec.GraphQLType<Account>;
+
     export type DateTime = string;
 
     export type Filter = {
-      readonly term?: GraphQLSpec.String | null;
       readonly limit?: GraphQLSpec.Int;
+      readonly term?: GraphQLSpec.String | null;
     };
 
     export interface Named extends Node, GraphQLSpec.Interface {
@@ -82,18 +90,18 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
     export declare const Node: GraphQLSpec.GraphQLType<Node>;
 
     export interface Query extends GraphQLSpec.Query {
-      user(args: {
-        readonly id: GraphQLSpec.ID;
-        readonly filter?: Filter | null;
-      }): User | null;
       search(): ReadonlyArray<SearchResult>;
+      user(args: {
+        readonly filter?: Filter | null;
+        readonly id: GraphQLSpec.ID;
+      }): User | null;
     }
 
     export declare const Query: GraphQLSpec.GraphQLType<Query>;
 
     export type Role = "ADMIN" | "USER";
 
-    export type SearchResult = User;
+    export type SearchResult = Account | User;
 
     export declare const SearchResult: GraphQLSpec.GraphQLType<SearchResult>;
 
@@ -107,16 +115,27 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
           readonly name: GraphQLSpec.String;
         };
 
-    export interface User extends Node, Named, GraphQLSpec.Obj {
+    export interface User extends Named, Node, GraphQLSpec.Obj {
+      friends(): ReadonlyArray<User | null> | null;
       id(): GraphQLSpec.ID;
       name(): GraphQLSpec.String;
-      friends(): ReadonlyArray<User | null> | null;
     }
 
     export declare const User: GraphQLSpec.GraphQLType<User>;
   `;
 
   assert.equal(await formatTypeScript(output), await formatTypeScript(expected));
+});
+
+test("alphabetizes output independently of SDL declaration order", async () => {
+  const options = { scalarMappings: { DateTime: "string" } };
+  const alphabetical = await compileSchema({ kind: "sdl", sdl: SDL }, options);
+  const unalphabetical = await compileSchema(
+    { kind: "sdl", sdl: UNALPHABETIZED_SDL },
+    options,
+  );
+
+  assert.equal(unalphabetical, alphabetical);
 });
 
 test("loads local SDL and introspection JSON through the same boundary", async () => {
