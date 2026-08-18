@@ -11,14 +11,13 @@ const PersonInfoByIDView =
   defineQueryView<YourSchema.Query, { id: GraphSpec.ID, showFriends: boolean }}>(
     ({ query, id, showFriends }) => {
       const node = query.node({id});
-      if (node instanceof Person) {
-        const person = node as Person;
+      if (YourSchema.isPerson(node)) {
         return <div>
-          <div>{person.name()}</div>
+          <div>{node.name()}</div>
 
           {showFriends && (
             <Defer fallback={<div>Loading friends...</div>}>
-              <FriendList person={person} />
+              <FriendList person={node} />
             </Defer>
           )}
         </div>
@@ -190,12 +189,12 @@ const PersonView =
   >(({ person, showFriends }) => {
     let details: JSX.Element | null = null;
 
-    if (person instanceof Schema.Customer) {
+    if (Schema.isCustomer(person)) {
       details = (
         <CustomerView customer={person} />
       );
     } else if (
-      person instanceof Schema.Employee
+      Schema.isEmployee(person)
     ) {
       details = (
         <EmployeeView employee={person} />
@@ -308,7 +307,7 @@ Several things have been inferred from ordinary TypeScript and React code.
 This:
 
 ```tsx
-person instanceof Schema.Customer
+Schema.isCustomer(person)
 ```
 
 became:
@@ -316,6 +315,23 @@ became:
 ```graphql
 ... on Customer
 ```
+
+Generated predicates are TypeScript type guards, so the original value narrows
+without requiring a string-valued `__typename` comparison. The same pattern is
+used to refine a value to a GraphQL interface:
+
+```tsx
+if (Schema.isNamed(value)) {
+  return <NamedView named={value} />;
+}
+```
+
+ViewQL extracts an inline fragment on `Named` and rewrites the predicate to a
+check against the corresponding generated fragment model.
+
+Predicates are generated for concrete objects and GraphQL interfaces. Unions
+are refined by testing a concrete member, while OneOf inputs narrow through
+ordinary non-null checks on their exclusive fields.
 
 This:
 
@@ -517,7 +533,7 @@ function PersonView({
 The original:
 
 ```tsx
-person instanceof Schema.Customer
+Schema.isCustomer(person)
 ```
 
 has disappeared.
@@ -530,7 +546,10 @@ customer != null
 
 where `customer` is the fragment model corresponding to the GraphQL type refinement.
 
-This works with GraphQL's type system rather than JavaScript prototype inheritance and can therefore support GraphQL interfaces and compatible type refinements as well as concrete object types.
+Generated predicates such as `Schema.isCustomer(value)` and
+`Schema.isNamed(value)` narrow concrete objects and interfaces without exposing
+string literals in application code. The compiler rewrites each predicate to
+the corresponding fragment-model null check.
 
 Finally, the query view becomes an ordinary Relay query component:
 

@@ -34,7 +34,7 @@ const PersonView =
     "person",
     PersonViewProps
   >(({ person, showFriends }) => {
-    if (person instanceof Schema.Customer) {
+    if (Schema.isCustomer(person)) {
       // ...
     }
 
@@ -105,11 +105,22 @@ ViewQL instead generates a TypeScript façade directly from the GraphQL schema.
 For example:
 
 ```ts
-interface Person extends GraphQLSpec.Interface {
+type Person = Customer | Employee;
+
+declare function isPerson(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Person;
+
+interface Customer extends GraphQLSpec.Obj {
+  readonly __typename: "Customer";
   id(): GraphQLSpec.ID;
   name(): string;
   friends(): ReadonlyArray<Person>;
 }
+
+declare function isCustomer(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Customer;
 ```
 
 A developer therefore immediately receives:
@@ -331,19 +342,11 @@ export type Float = number;
 export type String = string;
 export type Boolean = boolean;
 
-export interface Interface {}
-
 export interface Obj {}
 
 export interface Query extends Obj {}
 
 export interface Schema {}
-
-export interface GraphQLType<
-  T extends Interface | Obj
-> {
-  [Symbol.hasInstance](value: unknown): value is T;
-}
 
 export type QueryDefinition<
   TProps extends object
@@ -351,7 +354,7 @@ export type QueryDefinition<
 
 export type FragmentDefinition<
   K extends string,
-  TFragment extends Interface | Obj,
+  TFragment extends Obj,
   TProps extends object
 > = React.ComponentType<
   TProps & {
@@ -383,85 +386,81 @@ Example:
 ```ts
 import * as GraphQLSpec from "@viewql/spec";
 
-export interface Person
-  extends GraphQLSpec.Interface {
+export type Person = Customer | Employee;
+
+export declare function isPerson(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Person;
+
+export interface Customer
+  extends GraphQLSpec.Obj {
+  readonly __typename: "Customer";
   id(): GraphQLSpec.ID;
   name(): string;
   friends(): ReadonlyArray<Person>;
-}
-
-export interface Customer
-  extends Person, GraphQLSpec.Obj {
   customerId(): string;
 }
 
-export declare const Customer:
-  GraphQLSpec.GraphQLType<Customer>;
+export declare function isCustomer(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Customer;
 
 export interface Employee
-  extends Person, GraphQLSpec.Obj {
+  extends GraphQLSpec.Obj {
+  readonly __typename: "Employee";
+  id(): GraphQLSpec.ID;
+  name(): string;
+  friends(): ReadonlyArray<Person>;
   employeeId(): string;
 }
 
-export declare const Employee:
-  GraphQLSpec.GraphQLType<Employee>;
+export declare function isEmployee(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Employee;
 
 export interface Query
   extends GraphQLSpec.Query {
+  readonly __typename: "Query";
   person(args: {
     id: GraphQLSpec.ID;
   }): Person | null;
 }
+
+export declare function isQuery(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Query;
 ```
 
 The schema façade exists only to:
 
 * provide TypeScript typing;
 * provide compiler-recognizable schema method calls;
-* provide compiler-recognizable GraphQL type tokens.
+* provide structural unions of concrete GraphQL object types;
+* provide compiler-recognizable type predicates for objects and interfaces.
 
 It should be removed or rendered irrelevant in final compiled application code.
 
 ---
 
-# 7. GraphQL type tokens and `instanceof`
+# 7. GraphQL type narrowing
 
-GraphQL objects and interfaces are represented as TypeScript interfaces.
+GraphQL objects are represented as structural TypeScript interfaces with a
+literal `__typename` discriminator. GraphQL interfaces and unions are
+represented as unions of their possible concrete object types.
 
-Interfaces have no runtime value, but developers should be able to write normal TypeScript narrowing syntax:
+Generated schema modules expose TypeScript type predicates for every concrete
+object and GraphQL interface. Developers therefore narrow values without
+writing `__typename` string literals:
 
 ```ts
-if (person instanceof Schema.Customer) {
+if (Schema.isCustomer(person)) {
   // person narrows to Customer
 }
 ```
 
-Therefore generated schema modules provide value-side tokens:
-
-```ts
-export declare const Customer:
-  GraphQLSpec.GraphQLType<Customer>;
-```
-
-using:
-
-```ts
-interface GraphQLType<T> {
-  [Symbol.hasInstance](value: unknown): value is T;
-}
-```
-
-These tokens are compiler-facing abstractions.
-
-They should not survive into final runtime code.
-
-The component compiler rewrites:
-
-```ts
-person instanceof Schema.Customer
-```
-
-into a test against the corresponding generated fragment model.
+The component compiler recognizes generated predicate symbols and emits the
+corresponding GraphQL type refinement. It rewrites the predicate call to a test
+against the client-generated fragment model.
 
 Conceptually:
 
@@ -469,15 +468,36 @@ Conceptually:
 customerFragment != null
 ```
 
-This is important because GraphQL type refinement is not equivalent to JavaScript prototype inheritance.
+This is important because GraphQL type refinement is not equivalent to
+JavaScript prototype inheritance.
+
+GraphQL interfaces have no distinct JavaScript runtime representation. Their
+generated predicates narrow the original source value to the union of concrete
+objects that implement the interface:
+
+```ts
+if (Schema.isNamed(value)) {
+  // value is narrowed to Schema.Named
+}
+```
+
+Each predicate is a compiler-facing declaration. For an interface predicate,
+the component compiler emits an inline fragment conditioned on that interface
+and associates the guarded source value with the corresponding client fragment
+model. Predicate calls must not survive into final runtime code.
 
 This lowering naturally supports:
 
-* GraphQL concrete object types;
-* GraphQL interfaces;
+* GraphQL concrete object types through generated predicates;
+* GraphQL interfaces through generated predicates;
 * inherited interface/type relationships;
 
 provided the GraphQL type condition is valid.
+
+The schema compiler does not emit predicates for GraphQL unions: callers test
+the desired concrete member with its object predicate. OneOf inputs likewise
+use their exclusive field shapes and ordinary non-null field checks. Scalars,
+enums, and ordinary input objects do not participate in output type refinement.
 
 ---
 
@@ -599,8 +619,8 @@ Example:
 
 ```graphql
 input UserSelector @oneOf {
-  id: ID
   email: String
+  id: ID
 }
 ```
 
@@ -609,13 +629,25 @@ could become:
 ```ts
 type UserSelector =
   | {
-      readonly id: GraphQLSpec.ID;
-      readonly email?: never;
+      readonly email: string;
+      readonly id?: never;
     }
   | {
-      readonly id?: never;
-      readonly email: string;
+      readonly email?: never;
+      readonly id: GraphQLSpec.ID;
     };
+```
+
+The selected field is required and non-null while every unselected field is
+optional `never`. Ordinary null checks therefore narrow the input at both
+runtime and compile time:
+
+```ts
+if (selector.email != null) {
+  // selector is the email variant
+} else if (selector.id != null) {
+  // selector is the ID variant
+}
 ```
 
 ---
@@ -716,7 +748,7 @@ Approximate source API:
 
 ```ts
 defineFragmentView<
-  TFragment extends GraphQLSpec.Interface | GraphQLSpec.Obj,
+  TFragment extends GraphQLSpec.Obj,
   K extends string,
   TProps extends object
 >(
@@ -1141,12 +1173,13 @@ The design principle is:
 
 # 20. Type refinement
 
-Normal TypeScript `instanceof` checks against generated GraphQL type tokens should translate into GraphQL type refinements.
+Calls to generated object and interface type predicates should translate into
+GraphQL type refinements.
 
 Source:
 
 ```tsx
-if (person instanceof Schema.Customer) {
+if (Schema.isCustomer(person)) {
   return (
     <CustomerView customer={person} />
   );
@@ -1167,7 +1200,18 @@ Relay's aliased fragment model then allows the rewritten code to test:
 customer != null
 ```
 
-rather than executing `instanceof`.
+rather than executing the compiler-facing predicate at runtime.
+
+An interface condition uses the same source pattern:
+
+```tsx
+if (Schema.isNamed(value)) {
+  return <NamedView named={value} />;
+}
+```
+
+This becomes an inline fragment on `Named`; the compiler associates `value`
+inside the guarded region with the corresponding aliased fragment model.
 
 All necessary refinement/null checking should occur in the parent view.
 
@@ -1276,7 +1320,7 @@ Example:
 ```ts
 person.name();
 
-if (person instanceof Schema.Employee) {
+if (Schema.isEmployee(person)) {
   person.employeeId();
 }
 ```
@@ -2149,7 +2193,7 @@ if (employee != null) {
 This replaces source-level:
 
 ```ts
-person instanceof Schema.Employee
+Schema.isEmployee(person)
 ```
 
 ---
@@ -2542,7 +2586,7 @@ This was rejected.
 The desired API is ordinary TypeScript:
 
 ```ts
-if (person instanceof Schema.Employee) {
+if (Schema.isEmployee(person)) {
   // ...
 }
 ```
@@ -2942,12 +2986,12 @@ const PersonView =
   >(({ person, showFriends }) => {
     let details: JSX.Element | null = null;
 
-    if (person instanceof Schema.Customer) {
+    if (Schema.isCustomer(person)) {
       details = (
         <CustomerView customer={person} />
       );
     } else if (
-      person instanceof Schema.Employee
+      Schema.isEmployee(person)
     ) {
       details = (
         <EmployeeView employee={person} />
@@ -3109,7 +3153,7 @@ schema method call
 schema method argument
   → operation variable
 
-instanceof
+object/interface type predicate
   → GraphQL type refinement
   → Relay aliased fragment model
 
@@ -3174,7 +3218,6 @@ Implement:
 * `Obj`;
 * `Query`;
 * `Schema`;
-* `GraphQLType`.
 
 Add unit tests for branded scalar helpers.
 
@@ -3184,10 +3227,10 @@ Add unit tests for branded scalar helpers.
 
 Given SDL, generate:
 
-* object interfaces;
-* interface interfaces;
+* object interfaces with literal `__typename` discriminants;
+* interface unions;
+* object and interface type predicate functions;
 * union representation as needed by compiler;
-* type tokens;
 * field methods;
 * argument object types;
 * input objects;
@@ -3285,15 +3328,14 @@ Emit `@include`/`@skip` only when predicates are GraphQL-liftable.
 
 ---
 
-## Milestone 10: `instanceof`
+## Milestone 10: type refinement
 
-Recognize generated GraphQL type tokens.
+Recognize generated object and interface type predicate functions by symbol.
 
-Emit GraphQL type refinements.
+Emit GraphQL type refinements. For Relay, use aliased fragment regions.
 
-For Relay, use aliased fragment regions.
-
-Rewrite source checks to fragment-model null checks.
+Rewrite predicate calls to fragment-model null checks and associate the guarded
+source value with the refined fragment model.
 
 ---
 
@@ -3330,7 +3372,7 @@ Transform:
 * schema methods → generated fragment-model properties;
 * query façade → Relay query reads;
 * fragment props → Relay keys;
-* `instanceof` → alias null checks;
+* object/interface predicates → alias null checks;
 * fragment views → `useFragment`;
 * operation views → Relay query APIs.
 
@@ -3526,7 +3568,7 @@ when the compiler can infer the necessary semantics safely.
 Prefer:
 
 ```tsx
-if (person instanceof Schema.Customer) {
+if (Schema.isCustomer(person)) {
   ...
 }
 ```
