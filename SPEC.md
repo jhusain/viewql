@@ -34,7 +34,7 @@ const PersonView =
     "person",
     PersonViewProps
   >(({ person, showFriends }) => {
-    if (person.__typename === "Customer") {
+    if (Schema.isCustomer(person)) {
       // ...
     }
 
@@ -107,9 +107,9 @@ For example:
 ```ts
 type Person = Customer | Employee;
 
-declare function asPerson(
+declare function isPerson(
   value: GraphQLSpec.Obj | null | undefined
-): Person | null;
+): value is Person;
 
 interface Customer extends GraphQLSpec.Obj {
   readonly __typename: "Customer";
@@ -117,6 +117,10 @@ interface Customer extends GraphQLSpec.Obj {
   name(): string;
   friends(): ReadonlyArray<Person>;
 }
+
+declare function isCustomer(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Customer;
 ```
 
 A developer therefore immediately receives:
@@ -384,9 +388,9 @@ import * as GraphQLSpec from "@viewql/spec";
 
 export type Person = Customer | Employee;
 
-export declare function asPerson(
+export declare function isPerson(
   value: GraphQLSpec.Obj | null | undefined
-): Person | null;
+): value is Person;
 
 export interface Customer
   extends GraphQLSpec.Obj {
@@ -397,6 +401,10 @@ export interface Customer
   customerId(): string;
 }
 
+export declare function isCustomer(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Customer;
+
 export interface Employee
   extends GraphQLSpec.Obj {
   readonly __typename: "Employee";
@@ -406,6 +414,10 @@ export interface Employee
   employeeId(): string;
 }
 
+export declare function isEmployee(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Employee;
+
 export interface Query
   extends GraphQLSpec.Query {
   readonly __typename: "Query";
@@ -413,14 +425,18 @@ export interface Query
     id: GraphQLSpec.ID;
   }): Person | null;
 }
+
+export declare function isQuery(
+  value: GraphQLSpec.Obj | null | undefined
+): value is Query;
 ```
 
 The schema façade exists only to:
 
 * provide TypeScript typing;
 * provide compiler-recognizable schema method calls;
-* provide discriminated unions for concrete GraphQL object types;
-* provide compiler-recognizable conditional casts for GraphQL interfaces.
+* provide structural unions of concrete GraphQL object types;
+* provide compiler-recognizable type predicates for objects and interfaces.
 
 It should be removed or rendered irrelevant in final compiled application code.
 
@@ -432,18 +448,19 @@ GraphQL objects are represented as structural TypeScript interfaces with a
 literal `__typename` discriminator. GraphQL interfaces and unions are
 represented as unions of their possible concrete object types.
 
-Developers narrow concrete object types with ordinary discriminated-union
-control flow:
+Generated schema modules expose TypeScript type predicates for every concrete
+object and GraphQL interface. Developers therefore narrow values without
+writing `__typename` string literals:
 
 ```ts
-if (person.__typename === "Customer") {
+if (Schema.isCustomer(person)) {
   // person narrows to Customer
 }
 ```
 
-The component compiler recognizes `__typename` comparisons and emits the
-corresponding concrete GraphQL type refinement. It rewrites the source check to
-a test against the client-generated fragment model.
+The component compiler recognizes generated predicate symbols and emits the
+corresponding GraphQL type refinement. It rewrites the predicate call to a test
+against the client-generated fragment model.
 
 Conceptually:
 
@@ -454,30 +471,33 @@ customerFragment != null
 This is important because GraphQL type refinement is not equivalent to
 JavaScript prototype inheritance.
 
-GraphQL interfaces have no distinct JavaScript runtime representation. For
-interface refinement, generated schema modules therefore expose conditional
-cast functions:
+GraphQL interfaces have no distinct JavaScript runtime representation. Their
+generated predicates narrow the original source value to the union of concrete
+objects that implement the interface:
 
 ```ts
-const named = Schema.asNamed(value);
-
-if (named != null) {
-  // named is narrowed to Schema.Named
+if (Schema.isNamed(value)) {
+  // value is narrowed to Schema.Named
 }
 ```
 
-The conditional cast is a compiler-facing declaration. The component compiler
-emits an inline fragment conditioned on the GraphQL interface and rewrites the
-null check to use the corresponding client fragment model. Conditional casts
-must not survive into final runtime code.
+Each predicate is a compiler-facing declaration. For an interface predicate,
+the component compiler emits an inline fragment conditioned on that interface
+and associates the guarded source value with the corresponding client fragment
+model. Predicate calls must not survive into final runtime code.
 
 This lowering naturally supports:
 
-* GraphQL concrete object types through `__typename` discriminants;
-* GraphQL interfaces through conditional cast functions;
+* GraphQL concrete object types through generated predicates;
+* GraphQL interfaces through generated predicates;
 * inherited interface/type relationships;
 
 provided the GraphQL type condition is valid.
+
+The schema compiler does not emit predicates for GraphQL unions: callers test
+the desired concrete member with its object predicate. OneOf inputs likewise
+use their exclusive field shapes and ordinary non-null field checks. Scalars,
+enums, and ordinary input objects do not participate in output type refinement.
 
 ---
 
@@ -1153,13 +1173,13 @@ The design principle is:
 
 # 20. Type refinement
 
-Normal TypeScript discriminant checks against a generated object's
-`__typename` should translate into concrete GraphQL type refinements.
+Calls to generated object and interface type predicates should translate into
+GraphQL type refinements.
 
 Source:
 
 ```tsx
-if (person.__typename === "Customer") {
+if (Schema.isCustomer(person)) {
   return (
     <CustomerView customer={person} />
   );
@@ -1180,21 +1200,18 @@ Relay's aliased fragment model then allows the rewritten code to test:
 customer != null
 ```
 
-rather than executing the original `__typename` comparison against the schema
-façade.
+rather than executing the compiler-facing predicate at runtime.
 
-For an interface condition, the source uses the generated conditional cast:
+An interface condition uses the same source pattern:
 
 ```tsx
-const named = Schema.asNamed(value);
-
-if (named != null) {
-  return <NamedView named={named} />;
+if (Schema.isNamed(value)) {
+  return <NamedView named={value} />;
 }
 ```
 
-This becomes an inline fragment on `Named`; the compiler rewrites the cast and
-null check to the corresponding aliased fragment model.
+This becomes an inline fragment on `Named`; the compiler associates `value`
+inside the guarded region with the corresponding aliased fragment model.
 
 All necessary refinement/null checking should occur in the parent view.
 
@@ -1303,7 +1320,7 @@ Example:
 ```ts
 person.name();
 
-if (person.__typename === "Employee") {
+if (Schema.isEmployee(person)) {
   person.employeeId();
 }
 ```
@@ -2176,7 +2193,7 @@ if (employee != null) {
 This replaces source-level:
 
 ```ts
-person.__typename === "Employee"
+Schema.isEmployee(person)
 ```
 
 ---
@@ -2569,7 +2586,7 @@ This was rejected.
 The desired API is ordinary TypeScript:
 
 ```ts
-if (person.__typename === "Employee") {
+if (Schema.isEmployee(person)) {
   // ...
 }
 ```
@@ -2969,12 +2986,12 @@ const PersonView =
   >(({ person, showFriends }) => {
     let details: JSX.Element | null = null;
 
-    if (person.__typename === "Customer") {
+    if (Schema.isCustomer(person)) {
       details = (
         <CustomerView customer={person} />
       );
     } else if (
-      person.__typename === "Employee"
+      Schema.isEmployee(person)
     ) {
       details = (
         <EmployeeView employee={person} />
@@ -3136,7 +3153,7 @@ schema method call
 schema method argument
   → operation variable
 
-__typename comparison / interface conditional cast
+object/interface type predicate
   → GraphQL type refinement
   → Relay aliased fragment model
 
@@ -3210,10 +3227,10 @@ Add unit tests for branded scalar helpers.
 
 Given SDL, generate:
 
-* object interfaces;
-* interface unions and conditional cast functions;
+* object interfaces with literal `__typename` discriminants;
+* interface unions;
+* object and interface type predicate functions;
 * union representation as needed by compiler;
-* concrete `__typename` discriminants;
 * field methods;
 * argument object types;
 * input objects;
@@ -3313,13 +3330,12 @@ Emit `@include`/`@skip` only when predicates are GraphQL-liftable.
 
 ## Milestone 10: type refinement
 
-Recognize concrete `__typename` discriminant comparisons and generated
-interface conditional cast functions.
+Recognize generated object and interface type predicate functions by symbol.
 
 Emit GraphQL type refinements. For Relay, use aliased fragment regions.
 
-Rewrite concrete checks and interface conditional-cast null checks to
-fragment-model null checks.
+Rewrite predicate calls to fragment-model null checks and associate the guarded
+source value with the refined fragment model.
 
 ---
 
@@ -3356,7 +3372,7 @@ Transform:
 * schema methods → generated fragment-model properties;
 * query façade → Relay query reads;
 * fragment props → Relay keys;
-* `__typename` comparisons and interface casts → alias null checks;
+* object/interface predicates → alias null checks;
 * fragment views → `useFragment`;
 * operation views → Relay query APIs.
 
@@ -3552,7 +3568,7 @@ when the compiler can infer the necessary semantics safely.
 Prefer:
 
 ```tsx
-if (person.__typename === "Customer") {
+if (Schema.isCustomer(person)) {
   ...
 }
 ```

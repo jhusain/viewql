@@ -117,7 +117,7 @@ function emitInterface(type: GraphQLInterfaceType, schema: GraphQLSchema): strin
   const implementations = sortedByName(schema.getPossibleTypes(type)).map(
     ({ name }) => name,
   );
-  return `export type ${type.name} = ${implementations.length === 0 ? "never" : implementations.join(" | ")};\n\nexport declare function as${type.name}(value: GraphQLSpec.Obj | null | undefined): ${type.name} | null;`;
+  return `export type ${type.name} = ${implementations.length === 0 ? "never" : implementations.join(" | ")};\n\nexport declare function is${type.name}(value: GraphQLSpec.Obj | null | undefined): value is ${type.name};`;
 }
 
 function emitObject(
@@ -127,7 +127,7 @@ function emitObject(
 ): string {
   const marker = schema.getQueryType() === type ? "GraphQLSpec.Query" : "GraphQLSpec.Obj";
   const fields = emitFields(Object.values(type.getFields()), options);
-  return `export interface ${type.name} extends ${marker} {\n  readonly __typename: ${JSON.stringify(type.name)};\n${fields}\n}`;
+  return `export interface ${type.name} extends ${marker} {\n  readonly __typename: ${JSON.stringify(type.name)};\n${fields}\n}\n\nexport declare function is${type.name}(value: GraphQLSpec.Obj | null | undefined): value is ${type.name};`;
 }
 
 function emitEnum(type: GraphQLEnumType): string {

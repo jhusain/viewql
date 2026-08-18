@@ -69,6 +69,10 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
       id(): GraphQLSpec.ID;
     }
 
+    export declare function isAccount(
+      value: GraphQLSpec.Obj | null | undefined,
+    ): value is Account;
+
     export type DateTime = string;
 
     export type Filter = {
@@ -78,15 +82,15 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
 
     export type Named = User;
 
-    export declare function asNamed(
+    export declare function isNamed(
       value: GraphQLSpec.Obj | null | undefined,
-    ): Named | null;
+    ): value is Named;
 
     export type Node = Account | User;
 
-    export declare function asNode(
+    export declare function isNode(
       value: GraphQLSpec.Obj | null | undefined,
-    ): Node | null;
+    ): value is Node;
 
     export interface Query extends GraphQLSpec.Query {
       readonly __typename: "Query";
@@ -96,6 +100,10 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
         readonly id: GraphQLSpec.ID;
       }): User | null;
     }
+
+    export declare function isQuery(
+      value: GraphQLSpec.Obj | null | undefined,
+    ): value is Query;
 
     export type Role = "ADMIN" | "USER";
 
@@ -117,6 +125,10 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
       id(): GraphQLSpec.ID;
       name(): GraphQLSpec.String;
     }
+
+    export declare function isUser(
+      value: GraphQLSpec.Obj | null | undefined,
+    ): value is User;
 
   `;
 
@@ -168,7 +180,7 @@ test("supports TypeScript narrowing for objects, interfaces, and OneOf inputs", 
 
       declare const node: Schema.Node;
 
-      if (node.__typename === "Account") {
+      if (Schema.isAccount(node)) {
         const account: Schema.Account = node;
         account.id();
       } else {
@@ -176,8 +188,8 @@ test("supports TypeScript narrowing for objects, interfaces, and OneOf inputs", 
         user.name();
       }
 
-      const named = Schema.asNamed(node);
-      if (named != null) {
+      if (Schema.isNamed(node)) {
+        const named: Schema.Named = node;
         named.name();
       }
 
