@@ -11,8 +11,8 @@ const PersonInfoByIDView =
   defineQueryView<YourSchema.Query, { id: GraphSpec.ID, showFriends: boolean }}>(
     ({ query, id, showFriends }) => {
       const node = query.node({id});
-      if (node instanceof Person) {
-        const person = node as Person;
+      const person = YourSchema.asPerson(node);
+      if (person != null) {
         return <div>
           <div>{person.name()}</div>
 
@@ -190,12 +190,12 @@ const PersonView =
   >(({ person, showFriends }) => {
     let details: JSX.Element | null = null;
 
-    if (person instanceof Schema.Customer) {
+    if (person.__typename === "Customer") {
       details = (
         <CustomerView customer={person} />
       );
     } else if (
-      person instanceof Schema.Employee
+      person.__typename === "Employee"
     ) {
       details = (
         <EmployeeView employee={person} />
@@ -308,7 +308,7 @@ Several things have been inferred from ordinary TypeScript and React code.
 This:
 
 ```tsx
-person instanceof Schema.Customer
+person.__typename === "Customer"
 ```
 
 became:
@@ -316,6 +316,21 @@ became:
 ```graphql
 ... on Customer
 ```
+
+Concrete schema object types carry a literal `__typename`, so this is ordinary
+TypeScript discriminated-union narrowing as well as a GraphQL type condition.
+To refine a value to a GraphQL interface, use its generated conditional cast:
+
+```tsx
+const named = Schema.asNamed(value);
+
+if (named != null) {
+  return <NamedView named={named} />;
+}
+```
+
+ViewQL extracts an inline fragment on `Named` and rewrites the cast and null
+check to the corresponding generated fragment model.
 
 This:
 
@@ -517,7 +532,7 @@ function PersonView({
 The original:
 
 ```tsx
-person instanceof Schema.Customer
+person.__typename === "Customer"
 ```
 
 has disappeared.
@@ -530,7 +545,10 @@ customer != null
 
 where `customer` is the fragment model corresponding to the GraphQL type refinement.
 
-This works with GraphQL's type system rather than JavaScript prototype inheritance and can therefore support GraphQL interfaces and compatible type refinements as well as concrete object types.
+Concrete object checks use the GraphQL `__typename` discriminator rather than
+JavaScript prototype inheritance. GraphQL interface refinements use generated
+conditional casts such as `Schema.asNamed(value)`, which the compiler rewrites
+to the corresponding fragment-model null check.
 
 Finally, the query view becomes an ordinary Relay query component:
 

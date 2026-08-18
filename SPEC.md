@@ -34,7 +34,7 @@ const PersonView =
     "person",
     PersonViewProps
   >(({ person, showFriends }) => {
-    if (person instanceof Schema.Customer) {
+    if (person.__typename === "Customer") {
       // ...
     }
 
@@ -105,7 +105,14 @@ ViewQL instead generates a TypeScript façade directly from the GraphQL schema.
 For example:
 
 ```ts
-interface Person extends GraphQLSpec.Interface {
+type Person = Customer | Employee;
+
+declare function asPerson(
+  value: GraphQLSpec.Obj | null | undefined
+): Person | null;
+
+interface Customer extends GraphQLSpec.Obj {
+  readonly __typename: "Customer";
   id(): GraphQLSpec.ID;
   name(): string;
   friends(): ReadonlyArray<Person>;
@@ -331,19 +338,11 @@ export type Float = number;
 export type String = string;
 export type Boolean = boolean;
 
-export interface Interface {}
-
 export interface Obj {}
 
 export interface Query extends Obj {}
 
 export interface Schema {}
-
-export interface GraphQLType<
-  T extends Interface | Obj
-> {
-  [Symbol.hasInstance](value: unknown): value is T;
-}
 
 export type QueryDefinition<
   TProps extends object
@@ -351,7 +350,7 @@ export type QueryDefinition<
 
 export type FragmentDefinition<
   K extends string,
-  TFragment extends Interface | Obj,
+  TFragment extends Obj,
   TProps extends object
 > = React.ComponentType<
   TProps & {
@@ -383,31 +382,33 @@ Example:
 ```ts
 import * as GraphQLSpec from "@viewql/spec";
 
-export interface Person
-  extends GraphQLSpec.Interface {
+export type Person = Customer | Employee;
+
+export declare function asPerson(
+  value: GraphQLSpec.Obj | null | undefined
+): Person | null;
+
+export interface Customer
+  extends GraphQLSpec.Obj {
+  readonly __typename: "Customer";
   id(): GraphQLSpec.ID;
   name(): string;
   friends(): ReadonlyArray<Person>;
-}
-
-export interface Customer
-  extends Person, GraphQLSpec.Obj {
   customerId(): string;
 }
 
-export declare const Customer:
-  GraphQLSpec.GraphQLType<Customer>;
-
 export interface Employee
-  extends Person, GraphQLSpec.Obj {
+  extends GraphQLSpec.Obj {
+  readonly __typename: "Employee";
+  id(): GraphQLSpec.ID;
+  name(): string;
+  friends(): ReadonlyArray<Person>;
   employeeId(): string;
 }
 
-export declare const Employee:
-  GraphQLSpec.GraphQLType<Employee>;
-
 export interface Query
   extends GraphQLSpec.Query {
+  readonly __typename: "Query";
   person(args: {
     id: GraphQLSpec.ID;
   }): Person | null;
@@ -418,50 +419,31 @@ The schema façade exists only to:
 
 * provide TypeScript typing;
 * provide compiler-recognizable schema method calls;
-* provide compiler-recognizable GraphQL type tokens.
+* provide discriminated unions for concrete GraphQL object types;
+* provide compiler-recognizable conditional casts for GraphQL interfaces.
 
 It should be removed or rendered irrelevant in final compiled application code.
 
 ---
 
-# 7. GraphQL type tokens and `instanceof`
+# 7. GraphQL type narrowing
 
-GraphQL objects and interfaces are represented as TypeScript interfaces.
+GraphQL objects are represented as structural TypeScript interfaces with a
+literal `__typename` discriminator. GraphQL interfaces and unions are
+represented as unions of their possible concrete object types.
 
-Interfaces have no runtime value, but developers should be able to write normal TypeScript narrowing syntax:
+Developers narrow concrete object types with ordinary discriminated-union
+control flow:
 
 ```ts
-if (person instanceof Schema.Customer) {
+if (person.__typename === "Customer") {
   // person narrows to Customer
 }
 ```
 
-Therefore generated schema modules provide value-side tokens:
-
-```ts
-export declare const Customer:
-  GraphQLSpec.GraphQLType<Customer>;
-```
-
-using:
-
-```ts
-interface GraphQLType<T> {
-  [Symbol.hasInstance](value: unknown): value is T;
-}
-```
-
-These tokens are compiler-facing abstractions.
-
-They should not survive into final runtime code.
-
-The component compiler rewrites:
-
-```ts
-person instanceof Schema.Customer
-```
-
-into a test against the corresponding generated fragment model.
+The component compiler recognizes `__typename` comparisons and emits the
+corresponding concrete GraphQL type refinement. It rewrites the source check to
+a test against the client-generated fragment model.
 
 Conceptually:
 
@@ -469,12 +451,30 @@ Conceptually:
 customerFragment != null
 ```
 
-This is important because GraphQL type refinement is not equivalent to JavaScript prototype inheritance.
+This is important because GraphQL type refinement is not equivalent to
+JavaScript prototype inheritance.
+
+GraphQL interfaces have no distinct JavaScript runtime representation. For
+interface refinement, generated schema modules therefore expose conditional
+cast functions:
+
+```ts
+const named = Schema.asNamed(value);
+
+if (named != null) {
+  // named is narrowed to Schema.Named
+}
+```
+
+The conditional cast is a compiler-facing declaration. The component compiler
+emits an inline fragment conditioned on the GraphQL interface and rewrites the
+null check to use the corresponding client fragment model. Conditional casts
+must not survive into final runtime code.
 
 This lowering naturally supports:
 
-* GraphQL concrete object types;
-* GraphQL interfaces;
+* GraphQL concrete object types through `__typename` discriminants;
+* GraphQL interfaces through conditional cast functions;
 * inherited interface/type relationships;
 
 provided the GraphQL type condition is valid.
@@ -599,8 +599,8 @@ Example:
 
 ```graphql
 input UserSelector @oneOf {
-  id: ID
   email: String
+  id: ID
 }
 ```
 
@@ -609,13 +609,25 @@ could become:
 ```ts
 type UserSelector =
   | {
-      readonly id: GraphQLSpec.ID;
-      readonly email?: never;
+      readonly email: string;
+      readonly id?: never;
     }
   | {
-      readonly id?: never;
-      readonly email: string;
+      readonly email?: never;
+      readonly id: GraphQLSpec.ID;
     };
+```
+
+The selected field is required and non-null while every unselected field is
+optional `never`. Ordinary null checks therefore narrow the input at both
+runtime and compile time:
+
+```ts
+if (selector.email != null) {
+  // selector is the email variant
+} else if (selector.id != null) {
+  // selector is the ID variant
+}
 ```
 
 ---
@@ -716,7 +728,7 @@ Approximate source API:
 
 ```ts
 defineFragmentView<
-  TFragment extends GraphQLSpec.Interface | GraphQLSpec.Obj,
+  TFragment extends GraphQLSpec.Obj,
   K extends string,
   TProps extends object
 >(
@@ -1141,12 +1153,13 @@ The design principle is:
 
 # 20. Type refinement
 
-Normal TypeScript `instanceof` checks against generated GraphQL type tokens should translate into GraphQL type refinements.
+Normal TypeScript discriminant checks against a generated object's
+`__typename` should translate into concrete GraphQL type refinements.
 
 Source:
 
 ```tsx
-if (person instanceof Schema.Customer) {
+if (person.__typename === "Customer") {
   return (
     <CustomerView customer={person} />
   );
@@ -1167,7 +1180,21 @@ Relay's aliased fragment model then allows the rewritten code to test:
 customer != null
 ```
 
-rather than executing `instanceof`.
+rather than executing the original `__typename` comparison against the schema
+façade.
+
+For an interface condition, the source uses the generated conditional cast:
+
+```tsx
+const named = Schema.asNamed(value);
+
+if (named != null) {
+  return <NamedView named={named} />;
+}
+```
+
+This becomes an inline fragment on `Named`; the compiler rewrites the cast and
+null check to the corresponding aliased fragment model.
 
 All necessary refinement/null checking should occur in the parent view.
 
@@ -1276,7 +1303,7 @@ Example:
 ```ts
 person.name();
 
-if (person instanceof Schema.Employee) {
+if (person.__typename === "Employee") {
   person.employeeId();
 }
 ```
@@ -2149,7 +2176,7 @@ if (employee != null) {
 This replaces source-level:
 
 ```ts
-person instanceof Schema.Employee
+person.__typename === "Employee"
 ```
 
 ---
@@ -2542,7 +2569,7 @@ This was rejected.
 The desired API is ordinary TypeScript:
 
 ```ts
-if (person instanceof Schema.Employee) {
+if (person.__typename === "Employee") {
   // ...
 }
 ```
@@ -2942,12 +2969,12 @@ const PersonView =
   >(({ person, showFriends }) => {
     let details: JSX.Element | null = null;
 
-    if (person instanceof Schema.Customer) {
+    if (person.__typename === "Customer") {
       details = (
         <CustomerView customer={person} />
       );
     } else if (
-      person instanceof Schema.Employee
+      person.__typename === "Employee"
     ) {
       details = (
         <EmployeeView employee={person} />
@@ -3109,7 +3136,7 @@ schema method call
 schema method argument
   → operation variable
 
-instanceof
+__typename comparison / interface conditional cast
   → GraphQL type refinement
   → Relay aliased fragment model
 
@@ -3174,7 +3201,6 @@ Implement:
 * `Obj`;
 * `Query`;
 * `Schema`;
-* `GraphQLType`.
 
 Add unit tests for branded scalar helpers.
 
@@ -3185,9 +3211,9 @@ Add unit tests for branded scalar helpers.
 Given SDL, generate:
 
 * object interfaces;
-* interface interfaces;
+* interface unions and conditional cast functions;
 * union representation as needed by compiler;
-* type tokens;
+* concrete `__typename` discriminants;
 * field methods;
 * argument object types;
 * input objects;
@@ -3285,15 +3311,15 @@ Emit `@include`/`@skip` only when predicates are GraphQL-liftable.
 
 ---
 
-## Milestone 10: `instanceof`
+## Milestone 10: type refinement
 
-Recognize generated GraphQL type tokens.
+Recognize concrete `__typename` discriminant comparisons and generated
+interface conditional cast functions.
 
-Emit GraphQL type refinements.
+Emit GraphQL type refinements. For Relay, use aliased fragment regions.
 
-For Relay, use aliased fragment regions.
-
-Rewrite source checks to fragment-model null checks.
+Rewrite concrete checks and interface conditional-cast null checks to
+fragment-model null checks.
 
 ---
 
@@ -3330,7 +3356,7 @@ Transform:
 * schema methods → generated fragment-model properties;
 * query façade → Relay query reads;
 * fragment props → Relay keys;
-* `instanceof` → alias null checks;
+* `__typename` comparisons and interface casts → alias null checks;
 * fragment views → `useFragment`;
 * operation views → Relay query APIs.
 
@@ -3526,7 +3552,7 @@ when the compiler can infer the necessary semantics safely.
 Prefer:
 
 ```tsx
-if (person instanceof Schema.Customer) {
+if (person.__typename === "Customer") {
   ...
 }
 ```

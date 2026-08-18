@@ -113,13 +113,11 @@ function emitInputObject(type: GraphQLInputObjectType, options: GeneratorOptions
     .join("\n")}\n};`;
 }
 
-function emitInterface(type: GraphQLInterfaceType, options: GeneratorOptions): string {
-  const bases = [
-    ...sortedByName(type.getInterfaces()).map(({ name }) => name),
-    "GraphQLSpec.Interface",
-  ];
-  const fields = emitFields(Object.values(type.getFields()), options);
-  return `export interface ${type.name} extends ${bases.join(", ")} {\n${fields}\n}\n\nexport declare const ${type.name}: GraphQLSpec.GraphQLType<${type.name}>;`;
+function emitInterface(type: GraphQLInterfaceType, schema: GraphQLSchema): string {
+  const implementations = sortedByName(schema.getPossibleTypes(type)).map(
+    ({ name }) => name,
+  );
+  return `export type ${type.name} = ${implementations.length === 0 ? "never" : implementations.join(" | ")};\n\nexport declare function as${type.name}(value: GraphQLSpec.Obj | null | undefined): ${type.name} | null;`;
 }
 
 function emitObject(
@@ -128,12 +126,8 @@ function emitObject(
   options: GeneratorOptions,
 ): string {
   const marker = schema.getQueryType() === type ? "GraphQLSpec.Query" : "GraphQLSpec.Obj";
-  const bases = [
-    ...sortedByName(type.getInterfaces()).map(({ name }) => name),
-    marker,
-  ];
   const fields = emitFields(Object.values(type.getFields()), options);
-  return `export interface ${type.name} extends ${bases.join(", ")} {\n${fields}\n}\n\nexport declare const ${type.name}: GraphQLSpec.GraphQLType<${type.name}>;`;
+  return `export interface ${type.name} extends ${marker} {\n  readonly __typename: ${JSON.stringify(type.name)};\n${fields}\n}`;
 }
 
 function emitEnum(type: GraphQLEnumType): string {
@@ -144,7 +138,7 @@ function emitEnum(type: GraphQLEnumType): string {
 
 function emitUnion(type: GraphQLUnionType): string {
   const members = sortedByName(type.getTypes()).map(({ name }) => name);
-  return `export type ${type.name} = ${members.length === 0 ? "never" : members.join(" | ")};\n\nexport declare const ${type.name}: GraphQLSpec.GraphQLType<${type.name}>;`;
+  return `export type ${type.name} = ${members.length === 0 ? "never" : members.join(" | ")};`;
 }
 
 function emitNamedType(
@@ -163,7 +157,7 @@ function emitNamedType(
   if (isEnumType(type)) return emitEnum(type);
   if (isUnionType(type)) return emitUnion(type);
   if (isInputObjectType(type)) return emitInputObject(type, options);
-  if (isInterfaceType(type)) return emitInterface(type, options);
+  if (isInterfaceType(type)) return emitInterface(type, schema);
   if (isObjectType(type)) return emitObject(type, schema, options);
   return "";
 }

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { graphql, getIntrospectionQuery } from "graphql";
 import prettier from "prettier";
+import ts from "typescript";
 import {
   compileSchema,
   generateViewQLSchema,
@@ -14,7 +15,7 @@ import {
 } from "../dist/index.js";
 
 const SDL = `
-  type Account { id: ID! }
+  type Account implements Node { id: ID! }
   scalar DateTime @specifiedBy(url: "https://example.test/date-time")
   input Filter { limit: Int! = 10, term: String }
   interface Named implements Node { id: ID!, name: String! }
@@ -36,7 +37,7 @@ const UNALPHABETIZED_SDL = `
   interface Named implements Node { name: String!, id: ID! }
   input Filter { term: String, limit: Int! = 10 }
   scalar DateTime @specifiedBy(url: "https://example.test/date-time")
-  type Account { id: ID! }
+  type Account implements Node { id: ID! }
 `;
 
 function formatTypeScript(source) {
@@ -64,10 +65,9 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
     import * as GraphQLSpec from "@viewql/spec";
 
     export interface Account extends GraphQLSpec.Obj {
+      readonly __typename: "Account";
       id(): GraphQLSpec.ID;
     }
-
-    export declare const Account: GraphQLSpec.GraphQLType<Account>;
 
     export type DateTime = string;
 
@@ -76,20 +76,20 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
       readonly term?: GraphQLSpec.String | null;
     };
 
-    export interface Named extends Node, GraphQLSpec.Interface {
-      id(): GraphQLSpec.ID;
-      name(): GraphQLSpec.String;
-    }
+    export type Named = User;
 
-    export declare const Named: GraphQLSpec.GraphQLType<Named>;
+    export declare function asNamed(
+      value: GraphQLSpec.Obj | null | undefined,
+    ): Named | null;
 
-    export interface Node extends GraphQLSpec.Interface {
-      id(): GraphQLSpec.ID;
-    }
+    export type Node = Account | User;
 
-    export declare const Node: GraphQLSpec.GraphQLType<Node>;
+    export declare function asNode(
+      value: GraphQLSpec.Obj | null | undefined,
+    ): Node | null;
 
     export interface Query extends GraphQLSpec.Query {
+      readonly __typename: "Query";
       search(): ReadonlyArray<SearchResult>;
       user(args: {
         readonly filter?: Filter | null;
@@ -97,13 +97,9 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
       }): User | null;
     }
 
-    export declare const Query: GraphQLSpec.GraphQLType<Query>;
-
     export type Role = "ADMIN" | "USER";
 
     export type SearchResult = Account | User;
-
-    export declare const SearchResult: GraphQLSpec.GraphQLType<SearchResult>;
 
     export type Selector =
       | {
@@ -115,13 +111,13 @@ test("emits spec-backed facade types with exact nullability and inputs", async (
           readonly name: GraphQLSpec.String;
         };
 
-    export interface User extends Named, Node, GraphQLSpec.Obj {
+    export interface User extends GraphQLSpec.Obj {
+      readonly __typename: "User";
       friends(): ReadonlyArray<User | null> | null;
       id(): GraphQLSpec.ID;
       name(): GraphQLSpec.String;
     }
 
-    export declare const User: GraphQLSpec.GraphQLType<User>;
   `;
 
   assert.equal(await formatTypeScript(output), await formatTypeScript(expected));
@@ -136,6 +132,79 @@ test("alphabetizes output independently of SDL declaration order", async () => {
   );
 
   assert.equal(unalphabetical, alphabetical);
+});
+
+test("supports TypeScript narrowing for objects, interfaces, and OneOf inputs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "viewql-narrowing-"));
+  const schemaPath = join(directory, "schema.ts");
+  const specPath = join(directory, "graphql-spec.ts");
+  const usagePath = join(directory, "usage.ts");
+  const schema = await compileSchema(
+    { kind: "sdl", sdl: SDL },
+    {
+      scalarMappings: { DateTime: "string" },
+      specModule: "./graphql-spec.js",
+    },
+  );
+
+  await writeFile(schemaPath, schema);
+  await writeFile(
+    specPath,
+    `
+      export type ID = string & { readonly __id: unique symbol };
+      export type Int = number & { readonly __int: unique symbol };
+      export type Float = number;
+      export type String = string;
+      export type Boolean = boolean;
+      export interface Obj {}
+      export interface Query extends Obj {}
+    `,
+  );
+  await writeFile(
+    usagePath,
+    `
+      import * as GraphQLSpec from "./graphql-spec.js";
+      import * as Schema from "./schema.js";
+
+      declare const node: Schema.Node;
+
+      if (node.__typename === "Account") {
+        const account: Schema.Account = node;
+        account.id();
+      } else {
+        const user: Schema.User = node;
+        user.name();
+      }
+
+      const named = Schema.asNamed(node);
+      if (named != null) {
+        named.name();
+      }
+
+      declare const selector: Schema.Selector;
+      if (selector.id != null) {
+        const id: GraphQLSpec.ID = selector.id;
+      } else if (selector.name != null) {
+        const name: GraphQLSpec.String = selector.name;
+      }
+    `,
+  );
+
+  const program = ts.createProgram([schemaPath, specPath, usagePath], {
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    noEmit: true,
+    strict: true,
+    target: ts.ScriptTarget.ES2022,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+
+  assert.deepEqual(
+    diagnostics.map((diagnostic) =>
+      ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
+    ),
+    [],
+  );
 });
 
 test("loads local SDL and introspection JSON through the same boundary", async () => {

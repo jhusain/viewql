@@ -41,9 +41,6 @@ export type String = string;
 /** The GraphQL `Boolean` scalar's TypeScript representation. */
 export type Boolean = boolean;
 
-/** Marker inherited by generated GraphQL interface types. */
-export interface Interface {}
-
 /** Marker inherited by generated GraphQL object types. */
 export interface Obj {}
 
@@ -52,14 +49,3 @@ export interface Query extends Obj {}
 
 /** Marker inherited by generated schema container types. */
 export interface Schema {}
-
-/**
- * Value-side token emitted for a generated GraphQL object or interface.
- *
- * Its `Symbol.hasInstance` predicate lets ordinary `instanceof` expressions
- * narrow schema facade values. ViewQL replaces those expressions during
- * compilation; the token is not a JavaScript prototype contract.
- */
-export interface GraphQLType<T extends Interface | Obj> {
-  [Symbol.hasInstance](value: unknown): value is T;
-}
