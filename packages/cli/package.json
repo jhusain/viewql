@@ -1,0 +1,24 @@
+{
+  "name": "@viewql/cli",
+  "version": "0.0.0",
+  "description": "Command-line interface for the ViewQL compilers",
+  "type": "module",
+  "bin": {
+    "viewql": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "npm run build && node --test test/*.test.js",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@viewql/schema": "0.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^6.0.0"
+  }
+}
