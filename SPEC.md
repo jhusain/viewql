@@ -343,20 +343,6 @@ export interface Obj {}
 export interface Query extends Obj {}
 
 export interface Schema {}
-
-export type QueryDefinition<
-  TProps extends object
-> = React.ComponentType<TProps>;
-
-export type FragmentDefinition<
-  K extends string,
-  TFragment extends Obj,
-  TProps extends object
-> = React.ComponentType<
-  TProps & {
-    [P in K]: TFragment;
-  }
->;
 ```
 
 The precise placement of React-facing aliases may ultimately belong in `@viewql/runtime` rather than `@viewql/spec`.
