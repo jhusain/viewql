@@ -1,0 +1,29 @@
+{
+  "name": "@viewql/runtime",
+  "version": "0.0.0",
+  "description": "React authoring APIs for ViewQL views",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "npm run build && node --test test/*.test.js",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@viewql/spec": "0.0.0",
+    "react": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.10",
+    "typescript": "^6.0.0"
+  }
+}
