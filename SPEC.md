@@ -185,13 +185,9 @@ may imply:
 }
 ```
 
-provided `showFriends` can be represented as a GraphQL variable or fragment argument.
+provided `showFriends` can be represented as a GraphQL variable or fragment argument. Note the @skip directive might have been added to the fragment if a component is conditionally rendered based on negation of a variable.
 
-The runtime TypeScript check remains.
-
-The GraphQL directive is an optimization derived from the same condition.
-
-The developer does not repeat the condition in GraphQL.
+The runtime TypeScript check remains. The GraphQL directive is an optimization derived from the same condition. The developer does not repeat the condition in a hand-written GraphQL fragment.
 
 ---
 
